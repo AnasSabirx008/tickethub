@@ -1,0 +1,11 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: tickethub
+servers: 1          # control plane
+agents: 2           # 2 workers: lets you see pods spread out and survive the loss of a node
+ports:
+  - port: 8081:80          # your PC:8081 → port 80 of the cluster's ingress
+    nodeFilters: [loadbalancer]
+  - port: 8443:443
+    nodeFilters: [loadbalancer]
