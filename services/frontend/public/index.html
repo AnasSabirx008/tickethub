@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TicketHub</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">◆</span> TicketHub</div>
+    <div id="session" class="session"></div>
+  </header>
+
+  <main>
+    <section id="login" class="panel hidden">
+      <h1>Sign in</h1>
+      <p class="muted">Enter your access key to book seats.</p>
+      <form id="login-form">
+        <input id="key" type="password" placeholder="Access key" autocomplete="off" required>
+        <button type="submit">Sign in</button>
+      </form>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Upcoming events</h2>
+        <span class="muted small" id="refreshed"></span>
+      </div>
+      <div id="events" class="grid"></div>
+    </section>
+
+    <section id="bookings-section" class="hidden">
+      <h2>My bookings</h2>
+      <table>
+        <thead><tr><th>Event</th><th>Seats</th><th>Status</th><th>Booked</th><th></th></tr></thead>
+        <tbody id="bookings"></tbody>
+      </table>
+      <p id="no-bookings" class="muted hidden">No bookings yet.</p>
+    </section>
+  </main>
+
+  <div id="toasts"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

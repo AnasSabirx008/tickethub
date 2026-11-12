@@ -1,0 +1,3 @@
+pytest>=8
+fakeredis[lua]>=2.23
+respx>=0.21

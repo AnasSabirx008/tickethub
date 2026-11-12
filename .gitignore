@@ -1,0 +1,9 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.db
+
+# local secrets (docker compose)
+secrets/
+.env
+CLAUDE.md

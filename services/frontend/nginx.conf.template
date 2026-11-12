@@ -1,0 +1,28 @@
+# nginx: serves the static site and proxies /api to the gateway (same origin -> no CORS needed).
+# Rendered at container start: ${GATEWAY_URL} is replaced from the environment
+# (official nginx images do this for files in /etc/nginx/templates/).
+server {
+    listen 8080;                      # unprivileged port: the container does not run as root
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;                # don't advertise the nginx version
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" always;
+
+    location = /healthz { access_log off; return 200 "ok\n"; }
+
+    location /api/ {
+        proxy_pass ${GATEWAY_URL};
+        proxy_set_header X-Request-ID $request_id;   # nginx starts the correlation ID
+        proxy_set_header Host $host;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 10s;
+    }
+
+    location / {
+        try_files $uri /index.html;
+    }
+}

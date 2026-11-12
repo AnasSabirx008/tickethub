@@ -1,0 +1,122 @@
+# TicketHub local stack: `docker compose up -d --build`
+# Secrets live in ./secrets/*.txt (git-ignored) and are mounted as files in /run/secrets/,
+# so they never appear in env vars / `docker inspect`. Create them first (see README).
+name: tickethub
+
+x-python-service: &python-service      # common hardening for the 3 Python services
+  restart: unless-stopped
+  read_only: true                      # root filesystem is read-only
+  tmpfs: [/tmp]
+  cap_drop: [ALL]                      # no Linux capabilities needed
+  security_opt: [no-new-privileges:true]
+  networks: [backend]
+  healthcheck:                         # test inherited from the Dockerfile HEALTHCHECK;
+    interval: 10s                      # more tolerant timings: under load (WSL, parallel
+    timeout: 8s                        # startup) `python -c ...` can exceed 3s
+    retries: 5
+    start_period: 30s
+  deploy:
+    resources:
+      limits: { cpus: "0.5", memory: 256M }
+
+services:
+  # ---------- data (internal only) ----------
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    networks: [backend]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    networks: [backend]
+    environment:
+      POSTGRES_USER: tickethub
+      POSTGRES_DB: bookings
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password   # official image reads the file
+    secrets: [db_password]
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "tickethub", "-d", "bookings"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------- backend (internal only, no ports) ----------
+  inventory:
+    <<: *python-service
+    build: ./services/inventory
+    image: tickethub/inventory:${VERSION:-0.1.0}
+    environment:
+      APP_VERSION: ${VERSION:-0.1.0}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis: { condition: service_healthy }
+
+  booking:
+    <<: *python-service
+    build: ./services/booking
+    image: tickethub/booking:${VERSION:-0.1.0}
+    environment:
+      APP_VERSION: ${VERSION:-0.1.0}
+      DATABASE_URL: postgresql+psycopg://tickethub@postgres:5432/bookings   # no password here
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      INVENTORY_URL: http://inventory:8000
+    secrets: [db_password]
+    depends_on:
+      postgres: { condition: service_healthy }
+      inventory: { condition: service_healthy }
+
+  gateway:
+    <<: *python-service
+    build: ./services/gateway
+    image: tickethub/gateway:${VERSION:-0.1.0}
+    environment:
+      APP_VERSION: ${VERSION:-0.1.0}
+      API_KEYS_FILE: /run/secrets/api_keys
+      INVENTORY_URL: http://inventory:8000
+      BOOKING_URL: http://booking:8000
+    secrets: [api_keys]
+    networks: [backend, edge]          # the bridge between the two networks
+    depends_on:
+      inventory: { condition: service_healthy }
+      booking: { condition: service_healthy }
+
+  # ---------- frontend: the ONLY published port ----------
+  frontend:
+    build: ./services/frontend
+    image: tickethub/frontend:${VERSION:-0.1.0}
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      GATEWAY_URL: http://gateway:8000
+    ports:
+      - "${FRONT_PORT:-8081}:8080"     # 8080 is already used on the host
+    networks: [edge]                   # cannot reach booking/inventory/DBs directly
+    depends_on:
+      gateway: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+networks:
+  edge: {}
+  backend:
+    internal: true                     # no route to the outside world
+
+volumes:
+  redis-data:
+  pg-data:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  api_keys:
+    file: ./secrets/api_keys.txt
