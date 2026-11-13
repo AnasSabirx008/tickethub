@@ -1,0 +1,15 @@
+# `kubectl apply -k k8s/` applies everything in the right order (Namespace first).
+# Argo CD will point at this folder later (GitOps).
+# Secrets are NOT here on purpose: see docs/kubernetes.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - redis.yaml
+  - postgres.yaml
+  - inventory.yaml
+  - booking.yaml
+  - gateway.yaml
+  - frontend.yaml
+  - ingress.yaml
+  - networkpolicies.yaml

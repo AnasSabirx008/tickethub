@@ -1,0 +1,75 @@
+# Postgres = stateful -> StatefulSet + PersistentVolumeClaim (data survives Pod restarts).
+# The password comes from the Secret "postgres-credentials" (created with kubectl, never committed).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: tickethub
+spec:
+  serviceName: postgres               # the headless Service below gives the Pod a stable DNS name
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      automountServiceAccountToken: false   # no K8s API access needed (+ frees /run/secrets for our Secret)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999                # "postgres" user of the official image
+        runAsGroup: 999
+        fsGroup: 999                  # volumes are made writable for group 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports: [{name: postgres, containerPort: 5432}]
+          env:
+            - {name: POSTGRES_USER, value: tickethub}
+            - {name: POSTGRES_DB, value: bookings}
+            - {name: POSTGRES_PASSWORD_FILE, value: /run/secrets/db_password}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}   # subdir: volume root may contain lost+found
+          readinessProbe:
+            exec: {command: [pg_isready, -U, tickethub, -d, bookings]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: [pg_isready, -U, tickethub, -d, bookings]}
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+            - {name: run, mountPath: /var/run/postgresql}   # unix socket + lock file
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: secrets
+          secret: {secretName: postgres-credentials, defaultMode: 0440}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:               # one PVC per replica, kept when the Pod is deleted
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: tickethub
+spec:
+  clusterIP: None                     # headless: DNS points straight at the Pod
+  selector: {app: postgres}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]

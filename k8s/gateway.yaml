@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: tickethub
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: gateway}
+  template:
+    metadata:
+      labels: {app: gateway}
+    spec:
+      automountServiceAccountToken: false   # no K8s API access needed (+ frees /run/secrets for our Secret)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: gateway
+          image: tickethub/gateway:0.1.0
+          ports: [{name: http, containerPort: 8000}]
+          env:
+            - {name: APP_VERSION, value: "0.1.0"}
+            - {name: API_KEYS_FILE, value: /run/secrets/api_keys}
+            - {name: INVENTORY_URL, value: "http://inventory:8000"}
+            - {name: BOOKING_URL, value: "http://booking:8000"}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: api-keys, mountPath: /run/secrets, readOnly: true}
+      volumes:
+        - name: api-keys
+          secret:
+            secretName: gateway-api-keys
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: tickethub
+spec:
+  selector: {app: gateway}
+  ports: [{name: http, port: 8000, targetPort: http}]

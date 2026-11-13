@@ -1,0 +1,131 @@
+# Zero-trust inside the namespace: everything is denied, then each allowed flow is opened explicitly.
+#
+#   Traefik (kube-system) -> frontend:8080 -> gateway:8000 -> booking:8000   -> postgres:5432
+#                                                       \-> inventory:8000 <-/   inventory -> redis:6379
+#
+# A flow needs BOTH an egress rule on the client and an ingress rule on the server.
+# Probes are not affected: the kubelet runs on the node, and node traffic is allowed.
+
+# 1) Default deny: no Pod in the namespace can receive or send anything
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: tickethub
+spec:
+  podSelector: {}                   # all Pods
+  policyTypes: [Ingress, Egress]
+---
+# 2) DNS: every Pod may resolve Service names via CoreDNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: tickethub
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# 3) frontend: in from Traefik only, out to gateway only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend
+  namespace: tickethub
+spec:
+  podSelector: {matchLabels: {app: frontend}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
+      ports: [{protocol: TCP, port: 8080}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: gateway}}}]
+      ports: [{protocol: TCP, port: 8000}]
+---
+# 4) gateway: in from frontend, out to booking + inventory
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+  namespace: tickethub
+spec:
+  podSelector: {matchLabels: {app: gateway}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: frontend}}}]
+      ports: [{protocol: TCP, port: 8000}]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {app: booking}}
+        - podSelector: {matchLabels: {app: inventory}}
+      ports: [{protocol: TCP, port: 8000}]
+---
+# 5) booking: in from gateway, out to inventory + postgres
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: booking
+  namespace: tickethub
+spec:
+  podSelector: {matchLabels: {app: booking}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: gateway}}}]
+      ports: [{protocol: TCP, port: 8000}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: inventory}}}]
+      ports: [{protocol: TCP, port: 8000}]
+    - to: [{podSelector: {matchLabels: {app: postgres}}}]
+      ports: [{protocol: TCP, port: 5432}]
+---
+# 6) inventory: in from gateway + booking, out to redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory
+  namespace: tickethub
+spec:
+  podSelector: {matchLabels: {app: inventory}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: gateway}}
+        - podSelector: {matchLabels: {app: booking}}
+      ports: [{protocol: TCP, port: 8000}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: redis}}}]
+      ports: [{protocol: TCP, port: 6379}]
+---
+# 7) data stores: in from their single owner only (no egress needed beyond DNS)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: tickethub
+spec:
+  podSelector: {matchLabels: {app: postgres}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: booking}}}]
+      ports: [{protocol: TCP, port: 5432}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  namespace: tickethub
+spec:
+  podSelector: {matchLabels: {app: redis}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: inventory}}}]
+      ports: [{protocol: TCP, port: 6379}]

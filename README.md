@@ -87,6 +87,9 @@ curl -X POST localhost:8080/api/bookings -H 'x-api-key: k1' -H 'content-type: ap
      -d '{"event_id":"evt-3","quantity":2}'
 ```
 
+## Run on Kubernetes (k3d)
+See [docs/kubernetes.md](docs/kubernetes.md): manifests in `k8s/`, Ingress on http://localhost:8081, NetworkPolicies (default deny), secrets mounted as files.
+
 ## Tests
 ```bash
 for s in gateway inventory booking; do (cd services/$s && pytest -q); done

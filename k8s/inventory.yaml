@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory
+  namespace: tickethub
+spec:
+  replicas: 2                                   # 2 copies: one can die without an outage
+  selector:
+    matchLabels: {app: inventory}
+  template:
+    metadata:
+      labels: {app: inventory}
+    spec:
+      securityContext:                          # applies to the whole Pod
+        runAsNonRoot: true                      # refuses to start if the image runs as root
+        runAsUser: 10001                        # the numeric user from your Dockerfile
+        seccompProfile: {type: RuntimeDefault}  # blocks dangerous system calls
+      containers:
+        - name: inventory
+          image: tickethub/inventory:0.1.0
+          ports: [{name: http, containerPort: 8000}]
+          env:
+            - {name: REDIS_URL, value: "redis://redis:6379/0"}
+            - {name: APP_VERSION, value: "0.1.0"}
+          readinessProbe:                       # "can I receive traffic?"
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:                        # "am I stuck? if so, restart me"
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}  # reserved: used to pick a node
+            limits: {memory: 256Mi}             # ceiling: above it the Pod is killed (OOMKilled)
+          securityContext:                      # applies to this container
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true        # nobody can write into the image
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory
+  namespace: tickethub
+spec:
+  selector: {app: inventory}
+  ports: [{name: http, port: 8000, targetPort: http}]

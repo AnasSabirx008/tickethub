@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: tickethub
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: frontend}
+  template:
+    metadata:
+      labels: {app: frontend}
+    spec:
+      automountServiceAccountToken: false   # no K8s API access needed (+ frees /run/secrets for our Secret)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101                                  # "nginx" user of nginx-unprivileged
+        runAsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: frontend
+          image: tickethub/frontend:0.1.0
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: GATEWAY_URL, value: "http://gateway:8000"}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:                                 # the only places nginx writes:
+            - {name: conf, mountPath: /etc/nginx/conf.d}  # config rendered from the template at startup
+            - {name: tmp, mountPath: /tmp}                # pid file + proxy/client temp files
+      volumes:
+        - name: conf
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: tickethub
+spec:
+  selector: {app: frontend}
+  ports: [{name: http, port: 8080, targetPort: http}]
